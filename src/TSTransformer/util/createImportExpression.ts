@@ -47,10 +47,13 @@ function getRelativeImport(sourceRbxPath: RbxPath, moduleRbxPath: RbxPath) {
 }
 
 function validateModule(state: TransformState, scope: string) {
-	const scopedModules = path.join(state.data.nodeModulesPath, scope);
+	// In monorepos, nodeModulesPath may point to a package's local directory,
+	// but typeRoots points to the actual location (usually root node_modules).
+	// Instead of comparing paths, check if the scope ends any of the typeRoots.
 	if (state.compilerOptions.typeRoots) {
 		for (const typeRoot of state.compilerOptions.typeRoots) {
-			if (path.normalize(scopedModules) === path.normalize(typeRoot)) {
+			const normalizedTypeRoot = path.normalize(typeRoot);
+			if (normalizedTypeRoot.endsWith(path.normalize(scope))) {
 				return true;
 			}
 		}
@@ -87,7 +90,24 @@ function getNodeModulesImportParts(
 	}
 
 	if (state.projectType === ProjectType.Package) {
-		const relativeRbxPath = findRelativeRbxPath(moduleOutPath, state.pkgRojoResolvers);
+		// In monorepos, moduleOutPath may be under the package's local node_modules,
+		// but pkgRojoResolvers are based on typeRoots (usually root node_modules).
+		// We need to remap the path from package-local to root-level.
+		let resolvedModuleOutPath = moduleOutPath;
+		const nodeModulesIndex = moduleOutPath.lastIndexOf(NODE_MODULES);
+		if (nodeModulesIndex !== -1 && state.compilerOptions.typeRoots) {
+			const afterNodeModules = moduleOutPath.substring(nodeModulesIndex + NODE_MODULES.length + 1);
+
+			const scope = afterNodeModules.split(path.sep)[0];
+			for (const typeRoot of state.compilerOptions.typeRoots) {
+				if (path.normalize(typeRoot).endsWith(path.normalize(scope))) {
+					resolvedModuleOutPath = path.join(typeRoot, afterNodeModules.substring(scope.length + 1));
+					break;
+				}
+			}
+		}
+
+		const relativeRbxPath = findRelativeRbxPath(resolvedModuleOutPath, state.pkgRojoResolvers);
 		if (!relativeRbxPath) {
 			DiagnosticService.addDiagnostic(
 				errors.noRojoData(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath), true),
