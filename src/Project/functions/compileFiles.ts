@@ -245,7 +245,14 @@ export function compileSolutionProject(
 			return { emittedFiles: [], emitSkipped: false, diagnostics: [] };
 		}
 
-		return compileToLuau(program, projectData, pathTranslator, sourceFiles);
+		const result = compileToLuau(program, projectData, pathTranslator, sourceFiles);
+
+		if (!result.emitSkipped) {
+			const emitBuildInfo = builderProgram.emitBuildInfo ?? program.emitBuildInfo?.bind(program);
+			emitBuildInfo?.();
+		}
+
+		return result;
 	} catch (e) {
 		if (e instanceof DiagnosticError) {
 			return {

@@ -56,9 +56,16 @@ function createSolutionBuilderWatchHost(
 		const configFile = program.getProgram().getCompilerOptions().configFilePath;
 		const configPath = typeof configFile === "string" ? configFile : program.getProgram().getCurrentDirectory();
 
-		compileSolutionProject(program, configPath, projectOptions);
+		const result = compileSolutionProject(program, configPath, projectOptions);
 
-		DiagnosticService.flush();
+		for (const diagnostic of result.diagnostics) {
+			diagnosticReporter(diagnostic);
+		}
+
+		const diagnostics = DiagnosticService.flush();
+		for (const diagnostic of diagnostics) {
+			diagnosticReporter(diagnostic);
+		}
 
 		originalAfterEmit?.(program);
 	};

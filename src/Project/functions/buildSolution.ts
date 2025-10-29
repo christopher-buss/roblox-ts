@@ -18,10 +18,11 @@ export interface BuildSolutionOptions extends SolutionBuilderHostOptions {
  * @returns Exit status indicating success or failure
  */
 export function buildSolution(rootConfigPath: string, options: BuildSolutionOptions): ts.ExitStatus {
+	const diagnosticReporter = options.diagnosticReporter ?? ts.createDiagnosticReporter(ts.sys, true);
 	const host = createSolutionBuilderHost({
 		verbose: options.verbose,
 		logStatus: options.logStatus,
-		diagnosticReporter: options.diagnosticReporter,
+		diagnosticReporter,
 		statusReporter: options.statusReporter,
 	});
 
@@ -45,19 +46,23 @@ export function buildSolution(rootConfigPath: string, options: BuildSolutionOpti
 
 		try {
 			if (project.kind === ts.InvalidatedProjectKind.Build) {
-				const program = project.getBuilderProgram();
+				const builderProgram = project.getBuilderProgram();
 
-				if (!program) {
+				if (!builderProgram) {
 					LogService.writeLine("Warning: No builder program available for project");
 					project.done();
 					continue;
 				}
 
-				const configFile = program.getProgram().getCompilerOptions().configFilePath;
-				const configPath =
-					typeof configFile === "string" ? configFile : program.getProgram().getCurrentDirectory();
+				const program = builderProgram.getProgram();
+				const configFile = program.getCompilerOptions().configFilePath;
+				const configPath = typeof configFile === "string" ? configFile : program.getCurrentDirectory();
 
-				const result = compileSolutionProject(program, configPath, options.projectOptions);
+				const result = compileSolutionProject(builderProgram, configPath, options.projectOptions);
+
+				for (const diagnostic of result.diagnostics) {
+					diagnosticReporter(diagnostic);
+				}
 
 				if (result.emitSkipped) {
 					hasErrors = true;
@@ -65,10 +70,6 @@ export function buildSolution(rootConfigPath: string, options: BuildSolutionOpti
 
 				if (result.diagnostics.some(d => d.category === ts.DiagnosticCategory.Error)) {
 					hasErrors = true;
-				}
-
-				if (!result.emitSkipped) {
-					project.emit();
 				}
 			}
 
@@ -82,8 +83,11 @@ export function buildSolution(rootConfigPath: string, options: BuildSolutionOpti
 
 	const diagnostics = DiagnosticService.flush();
 
-	if (diagnostics.some(d => d.category === ts.DiagnosticCategory.Error)) {
-		hasErrors = true;
+	for (const diagnostic of diagnostics) {
+		diagnosticReporter(diagnostic);
+		if (diagnostic.category === ts.DiagnosticCategory.Error) {
+			hasErrors = true;
+		}
 	}
 
 	if (hasErrors) {
