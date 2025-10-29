@@ -1,6 +1,7 @@
 import { CLIError } from "CLI/errors/CLIError";
 import fs from "fs-extra";
 import path from "path";
+import { RobloxSolutionBuilder } from "Project/classes/RobloxSolutionBuilder";
 import { cleanup } from "Project/functions/cleanup";
 import { compileFiles } from "Project/functions/compileFiles";
 import { copyFiles } from "Project/functions/copyFiles";
@@ -8,8 +9,10 @@ import { copyInclude } from "Project/functions/copyInclude";
 import { createPathTranslator } from "Project/functions/createPathTranslator";
 import { createProjectData } from "Project/functions/createProjectData";
 import { createProjectProgram } from "Project/functions/createProjectProgram";
+import { detectCompositeProject } from "Project/functions/detectCompositeProject";
 import { getChangedSourceFiles } from "Project/functions/getChangedSourceFiles";
 import { setupProjectWatchProgram } from "Project/functions/setupProjectWatchProgram";
+import { setupSolutionWatchProgram } from "Project/functions/setupSolutionWatchProgram";
 import { LogService } from "Shared/classes/LogService";
 import { DEFAULT_PROJECT_OPTIONS, ProjectType } from "Shared/constants";
 import { LoggableError } from "Shared/errors/LoggableError";
@@ -133,26 +136,50 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 
 			const diagnosticReporter = ts.createDiagnosticReporter(ts.sys, true);
 
-			const data = createProjectData(tsConfigPath, projectOptions);
-			if (projectOptions.watch) {
-				setupProjectWatchProgram(data, projectOptions.usePolling);
-			} else {
-				const program = createProjectProgram(data);
-				const pathTranslator = createPathTranslator(program, data);
-				cleanup(pathTranslator);
-				copyInclude(data);
-				copyFiles(data, pathTranslator, new Set(getRootDirs(program.getCompilerOptions())));
-				const emitResult = compileFiles(
-					program.getProgram(),
-					data,
-					pathTranslator,
-					getChangedSourceFiles(program),
-				);
-				for (const diagnostic of emitResult.diagnostics) {
-					diagnosticReporter(diagnostic);
+			const isComposite = detectCompositeProject(tsConfigPath);
+			if (isComposite) {
+				if (projectOptions.watch) {
+					setupSolutionWatchProgram(tsConfigPath, projectOptions);
+				} else {
+					const solutionBuilder = new RobloxSolutionBuilder(tsConfigPath, {
+						verbose: projectOptions.verbose,
+						logStatus: true,
+						projectOptions,
+						diagnosticReporter,
+					});
+
+					const exitStatus = solutionBuilder.build();
+
+					if (
+						exitStatus !== ts.ExitStatus.Success &&
+						exitStatus !== ts.ExitStatus.DiagnosticsPresent_OutputsSkipped &&
+						exitStatus !== ts.ExitStatus.DiagnosticsPresent_OutputsGenerated
+					) {
+						process.exitCode = 1;
+					}
 				}
-				if (hasErrors(emitResult.diagnostics)) {
-					process.exitCode = 1;
+			} else {
+				const data = createProjectData(tsConfigPath, projectOptions);
+				if (projectOptions.watch) {
+					setupProjectWatchProgram(data, projectOptions.usePolling);
+				} else {
+					const program = createProjectProgram(data);
+					const pathTranslator = createPathTranslator(program, data);
+					cleanup(pathTranslator);
+					copyInclude(data);
+					copyFiles(data, pathTranslator, new Set(getRootDirs(program.getCompilerOptions())));
+					const emitResult = compileFiles(
+						program.getProgram(),
+						data,
+						pathTranslator,
+						getChangedSourceFiles(program),
+					);
+					for (const diagnostic of emitResult.diagnostics) {
+						diagnosticReporter(diagnostic);
+					}
+					if (hasErrors(emitResult.diagnostics)) {
+						process.exitCode = 1;
+					}
 				}
 			}
 		} catch (e) {
