@@ -1,7 +1,7 @@
 import { CLIError } from "CLI/errors/CLIError";
 import fs from "fs-extra";
 import path from "path";
-import { RobloxSolutionBuilder } from "Project/classes/RobloxSolutionBuilder";
+import { buildSolution } from "Project/functions/buildSolution";
 import { cleanup } from "Project/functions/cleanup";
 import { compileFiles } from "Project/functions/compileFiles";
 import { copyFiles } from "Project/functions/copyFiles";
@@ -9,7 +9,7 @@ import { copyInclude } from "Project/functions/copyInclude";
 import { createPathTranslator } from "Project/functions/createPathTranslator";
 import { createProjectData } from "Project/functions/createProjectData";
 import { createProjectProgram } from "Project/functions/createProjectProgram";
-import { detectCompositeProject } from "Project/functions/detectCompositeProject";
+import { shouldUseSolutionBuilder } from "Project/functions/detectCompositeProject";
 import { getChangedSourceFiles } from "Project/functions/getChangedSourceFiles";
 import { setupProjectWatchProgram } from "Project/functions/setupProjectWatchProgram";
 import { setupSolutionWatchProgram } from "Project/functions/setupSolutionWatchProgram";
@@ -136,19 +136,18 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 
 			const diagnosticReporter = ts.createDiagnosticReporter(ts.sys, true);
 
-			const isComposite = detectCompositeProject(tsConfigPath);
+			const data = createProjectData(tsConfigPath, projectOptions);
+			const isComposite = shouldUseSolutionBuilder(data);
 			if (isComposite) {
 				if (projectOptions.watch) {
 					setupSolutionWatchProgram(tsConfigPath, projectOptions);
 				} else {
-					const solutionBuilder = new RobloxSolutionBuilder(tsConfigPath, {
+					const exitStatus = buildSolution(tsConfigPath, {
 						verbose: projectOptions.verbose,
 						logStatus: true,
 						projectOptions,
 						diagnosticReporter,
 					});
-
-					const exitStatus = solutionBuilder.build();
 
 					if (
 						exitStatus !== ts.ExitStatus.Success &&
@@ -159,7 +158,6 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 					}
 				}
 			} else {
-				const data = createProjectData(tsConfigPath, projectOptions);
 				if (projectOptions.watch) {
 					setupProjectWatchProgram(data, projectOptions.usePolling);
 				} else {

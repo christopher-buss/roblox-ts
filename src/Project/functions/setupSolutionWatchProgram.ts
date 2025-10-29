@@ -1,4 +1,4 @@
-import { compileSolutionProject } from "Project/functions/compileSolutionProject";
+import { compileSolutionProject } from "Project/functions/compileFiles";
 import { createSolutionBuilderHost } from "Project/functions/createSolutionBuilderHost";
 import { LogService } from "Shared/classes/LogService";
 import { ProjectOptions } from "Shared/types";
@@ -56,7 +56,7 @@ function createSolutionBuilderWatchHost(
 		const configFile = program.getProgram().getCompilerOptions().configFilePath;
 		const configPath = typeof configFile === "string" ? configFile : program.getProgram().getCurrentDirectory();
 
-		compileSolutionProject(program, configPath, projectOptions, watchHost);
+		compileSolutionProject(program, configPath, projectOptions);
 
 		DiagnosticService.flush();
 

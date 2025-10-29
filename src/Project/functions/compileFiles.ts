@@ -6,6 +6,9 @@ import path from "path";
 import { checkFileName } from "Project/functions/checkFileName";
 import { checkRojoConfig } from "Project/functions/checkRojoConfig";
 import { createNodeModulesPathMapping } from "Project/functions/createNodeModulesPathMapping";
+import { createPathTranslator } from "Project/functions/createPathTranslator";
+import { createProjectData } from "Project/functions/createProjectData";
+import { getChangedSourceFiles } from "Project/functions/getChangedSourceFiles";
 import transformPathsTransformer from "Project/transformers/builtin/transformPaths";
 import { transformTypeReferenceDirectives } from "Project/transformers/builtin/transformTypeReferenceDirectives";
 import { createTransformerList, flattenIntoTransformers } from "Project/transformers/createTransformerList";
@@ -14,7 +17,8 @@ import { getPluginConfigs } from "Project/transformers/getPluginConfigs";
 import { getCustomPreEmitDiagnostics } from "Project/util/getCustomPreEmitDiagnostics";
 import { LogService } from "Shared/classes/LogService";
 import { ProjectType } from "Shared/constants";
-import { ProjectData } from "Shared/types";
+import { DiagnosticError } from "Shared/errors/DiagnosticError";
+import { ProjectData, ProjectOptions } from "Shared/types";
 import { assert } from "Shared/util/assert";
 import { benchmarkIfVerbose } from "Shared/util/benchmark";
 import { createTextDiagnostic } from "Shared/util/createTextDiagnostic";
@@ -41,12 +45,7 @@ function emitResultFailure(messageText: string): ts.EmitResult {
 	};
 }
 
-/**
- * 'transpiles' TypeScript project into a logically identical Luau project.
- *
- * writes rendered Luau source to the out directory.
- */
-export function compileFiles(
+function compileToLuau(
 	program: ts.Program,
 	data: ProjectData,
 	pathTranslator: PathTranslator,
@@ -207,7 +206,55 @@ export function compileFiles(
 		});
 	}
 
-	program.emitBuildInfo();
-
 	return { emittedFiles, emitSkipped: false, diagnostics: DiagnosticService.flush() };
+}
+
+/**
+ * 'transpiles' TypeScript project into a logically identical Luau project.
+ *
+ * writes rendered Luau source to the out directory.
+ */
+export function compileFiles(
+	program: ts.Program,
+	data: ProjectData,
+	pathTranslator: PathTranslator,
+	sourceFiles: Array<ts.SourceFile>,
+): ts.EmitResult {
+	const result = compileToLuau(program, data, pathTranslator, sourceFiles);
+
+	if (!result.emitSkipped) {
+		program.emitBuildInfo();
+	}
+
+	return result;
+}
+
+export function compileSolutionProject(
+	builderProgram: ts.EmitAndSemanticDiagnosticsBuilderProgram,
+	projectConfigPath: string,
+	projectOptions: ProjectOptions,
+	pathHints?: Array<string>,
+): ts.EmitResult {
+	try {
+		const program = builderProgram.getProgram();
+		const projectData = createProjectData(projectConfigPath, projectOptions);
+		const pathTranslator = createPathTranslator(builderProgram, projectData);
+		const sourceFiles = getChangedSourceFiles(builderProgram, pathHints);
+
+		if (sourceFiles.length === 0) {
+			return { emittedFiles: [], emitSkipped: false, diagnostics: [] };
+		}
+
+		return compileToLuau(program, projectData, pathTranslator, sourceFiles);
+	} catch (e) {
+		if (e instanceof DiagnosticError) {
+			return {
+				emitSkipped: true,
+				diagnostics: e.diagnostics,
+			};
+		}
+
+		LogService.writeLine(`Unexpected error compiling solution project: ${e}`);
+		throw e;
+	}
 }
