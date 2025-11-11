@@ -58,7 +58,9 @@ export function buildSolution(rootConfigPath: string, options: BuildSolutionOpti
 				const configFile = program.getCompilerOptions().configFilePath;
 				const configPath = typeof configFile === "string" ? configFile : program.getCurrentDirectory();
 
-				const result = compileSolutionProject(builderProgram, configPath, options.projectOptions);
+				const result = compileSolutionProject(builderProgram, configPath, options.projectOptions, undefined, {
+					runCleanup: true,
+				});
 
 				for (const diagnostic of result.diagnostics) {
 					diagnosticReporter(diagnostic);

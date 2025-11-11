@@ -1,74 +1,91 @@
 import { compileSolutionProject } from "Project/functions/compileFiles";
-import { createSolutionBuilderHost } from "Project/functions/createSolutionBuilderHost";
 import { LogService } from "Shared/classes/LogService";
 import { ProjectOptions } from "Shared/types";
 import { DiagnosticService } from "TSTransformer/classes/DiagnosticService";
 import ts from "typescript";
 
 export function setupSolutionWatchProgram(rootConfigPath: string, projectOptions: ProjectOptions): void {
-	const host = createSolutionBuilderWatchHost(projectOptions);
+	try {
+		const host = createSolutionBuilderWatchHost(projectOptions);
 
-	ts.createSolutionBuilderWithWatch(host, [rootConfigPath], {
-		incremental: true,
-		verbose: projectOptions.verbose ?? false,
-		watch: true,
-	});
+		const solutionBuilder = ts.createSolutionBuilderWithWatch(host, [rootConfigPath], {
+			incremental: true,
+			verbose: projectOptions.verbose ?? false,
+			watch: true,
+		});
 
-	LogService.writeLine("Starting compilation in watch mode...");
-	LogService.writeLine("Watching for file changes...");
+		solutionBuilder.build();
+	} catch (error) {
+		LogService.writeLine(`Error setting up solution watch: ${error}`);
+		if (error instanceof Error && error.stack) {
+			LogService.writeLineIfVerbose(error.stack);
+		}
+		throw error;
+	}
 }
 
 function createSolutionBuilderWatchHost(
 	projectOptions: ProjectOptions,
 ): ts.SolutionBuilderWithWatchHost<ts.EmitAndSemanticDiagnosticsBuilderProgram> {
 	const diagnosticReporter = ts.createDiagnosticReporter(ts.sys, true);
+	const builderStatusReporter = ts.createBuilderStatusReporter(ts.sys, true);
+	const statusReporter = ts.createWatchStatusReporter(ts.sys, true);
 
-	const baseHost = createSolutionBuilderHost({
-		verbose: projectOptions.verbose,
-		logStatus: true,
+	// Track which projects have been built to run cleanup only once per project
+	const builtProjects = new Set<string>();
+
+	// Use TypeScript's built-in watch host creator
+	const watchHost = ts.createSolutionBuilderWithWatchHost(
+		ts.sys,
+		ts.createEmitAndSemanticDiagnosticsBuilderProgram,
 		diagnosticReporter,
-		statusReporter: diagnosticReporter,
-	});
+		builderStatusReporter,
+		statusReporter,
+	);
 
-	const watchHost: ts.SolutionBuilderWithWatchHost<ts.EmitAndSemanticDiagnosticsBuilderProgram> = {
-		...baseHost,
+	// Wrap createProgram to intercept program creation and trigger Luau compilation
+	const originalCreateProgram = watchHost.createProgram;
+	if (originalCreateProgram) {
+		watchHost.createProgram = function (...args) {
+			const program = originalCreateProgram.apply(this, args);
 
-		watchFile: (path, callback, pollingInterval, watchOptions) => {
-			return ts.sys.watchFile!(path, callback, pollingInterval, watchOptions);
-		},
+			// After TypeScript creates the program, compile to Luau
+			if (program) {
+				try {
+					const configFile = program.getProgram().getCompilerOptions().configFilePath;
+					const configPath =
+						typeof configFile === "string" ? configFile : program.getProgram().getCurrentDirectory();
 
-		watchDirectory: (path, callback, recursive, watchOptions) => {
-			return ts.sys.watchDirectory!(path, callback, recursive, watchOptions);
-		},
+					// Run cleanup only on first build of each project
+					const isFirstBuild = !builtProjects.has(configPath);
+					if (isFirstBuild) {
+						builtProjects.add(configPath);
+					}
 
-		setTimeout: (callback, ms, ...args) => {
-			return ts.sys.setTimeout!(callback, ms, ...args);
-		},
+					// Compile the TypeScript files to Luau (this also handles file operations internally)
+					const result = compileSolutionProject(program, configPath, projectOptions, undefined, {
+						runCleanup: isFirstBuild,
+					});
 
-		clearTimeout: handle => {
-			return ts.sys.clearTimeout!(handle);
-		},
-	};
+					for (const diagnostic of result.diagnostics) {
+						diagnosticReporter(diagnostic);
+					}
 
-	const originalAfterEmit = watchHost.afterProgramEmitAndDiagnostics;
+					const diagnostics = DiagnosticService.flush();
+					for (const diagnostic of diagnostics) {
+						diagnosticReporter(diagnostic);
+					}
+				} catch (error) {
+					LogService.writeLine(`Error compiling to Luau: ${error}`);
+					if (error instanceof Error && error.stack) {
+						LogService.writeLineIfVerbose(error.stack);
+					}
+				}
+			}
 
-	watchHost.afterProgramEmitAndDiagnostics = (program: ts.EmitAndSemanticDiagnosticsBuilderProgram) => {
-		const configFile = program.getProgram().getCompilerOptions().configFilePath;
-		const configPath = typeof configFile === "string" ? configFile : program.getProgram().getCurrentDirectory();
-
-		const result = compileSolutionProject(program, configPath, projectOptions);
-
-		for (const diagnostic of result.diagnostics) {
-			diagnosticReporter(diagnostic);
-		}
-
-		const diagnostics = DiagnosticService.flush();
-		for (const diagnostic of diagnostics) {
-			diagnosticReporter(diagnostic);
-		}
-
-		originalAfterEmit?.(program);
-	};
+			return program;
+		};
+	}
 
 	return watchHost;
 }

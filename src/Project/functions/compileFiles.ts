@@ -5,6 +5,9 @@ import fs from "fs-extra";
 import path from "path";
 import { checkFileName } from "Project/functions/checkFileName";
 import { checkRojoConfig } from "Project/functions/checkRojoConfig";
+import { cleanup } from "Project/functions/cleanup";
+import { copyFiles } from "Project/functions/copyFiles";
+import { copyInclude } from "Project/functions/copyInclude";
 import { createNodeModulesPathMapping } from "Project/functions/createNodeModulesPathMapping";
 import { createPathTranslator } from "Project/functions/createPathTranslator";
 import { createProjectData } from "Project/functions/createProjectData";
@@ -234,11 +237,21 @@ export function compileSolutionProject(
 	projectConfigPath: string,
 	projectOptions: ProjectOptions,
 	pathHints?: Array<string>,
+	options?: { runCleanup?: boolean },
 ): ts.EmitResult {
 	try {
 		const program = builderProgram.getProgram();
 		const projectData = createProjectData(projectConfigPath, projectOptions);
 		const pathTranslator = createPathTranslator(builderProgram, projectData);
+
+		// Run file operations before compilation
+		if (options?.runCleanup) {
+			cleanup(pathTranslator);
+		}
+		copyInclude(projectData);
+		const compilerOptions = program.getCompilerOptions();
+		copyFiles(projectData, pathTranslator, new Set(getRootDirs(compilerOptions)));
+
 		const sourceFiles = getChangedSourceFiles(builderProgram, pathHints);
 
 		if (sourceFiles.length === 0) {
