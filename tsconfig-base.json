@@ -10,10 +10,12 @@
 		"esModuleInterop": true,
 		"removeComments": true,
 		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
 		"composite": true,
 		"sourceMap": true,
 		"outDir": "out",
 		"baseUrl": "src",
+		"libReplacement": false,
 		"paths": {
 			"*": ["*"]
 		},
