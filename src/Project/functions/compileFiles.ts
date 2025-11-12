@@ -48,6 +48,8 @@ function emitResultFailure(messageText: string): ts.EmitResult {
 	};
 }
 
+const ROJO_CACHE = new Map();
+
 function compileToLuau(
 	program: ts.Program,
 	data: ProjectData,
@@ -61,8 +63,12 @@ function compileToLuau(
 	const outDir = compilerOptions.outDir!;
 
 	const rojoResolver = data.rojoConfigPath
-		? RojoResolver.fromPath(data.rojoConfigPath)
+		? ROJO_CACHE.get(data.rojoConfigPath) ?? RojoResolver.fromPath(data.rojoConfigPath)
 		: RojoResolver.synthetic(outDir);
+
+	if (data.rojoConfigPath) {
+		ROJO_CACHE.set(data.rojoConfigPath, rojoResolver);
+	}
 
 	for (const warning of rojoResolver.getWarnings()) {
 		LogService.warn(warning);
@@ -76,7 +82,17 @@ function compileToLuau(
 		}
 	}
 
-	const pkgRojoResolvers = compilerOptions.typeRoots!.map(RojoResolver.synthetic);
+	const pkgRojoResolvers = compilerOptions.typeRoots!.map((v) => {
+		const existing = ROJO_CACHE.get(v);
+		if (existing) {
+			return existing;
+		}
+
+		const rojo = RojoResolver.synthetic(v);
+		ROJO_CACHE.set(v, rojo);
+		return rojo;
+	});
+
 	const nodeModulesPathMapping = createNodeModulesPathMapping(compilerOptions.typeRoots!);
 
 	const projectType = data.projectOptions.type ?? inferProjectType(data, rojoResolver);
