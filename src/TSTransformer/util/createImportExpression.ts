@@ -70,6 +70,20 @@ function findRelativeRbxPath(moduleOutPath: string, pkgRojoResolvers: Array<Rojo
 	}
 }
 
+function getPathsWithScope(rojoResolver: RojoResolver, moduleScope: string): Array<string> {
+	const pathsWithScope = new Set<string>();
+
+	for (const partition of rojoResolver.getPartitions()) {
+		const fsPath = partition.fsPath;
+		const normalized = path.normalize(fsPath);
+		if (normalized.endsWith(moduleScope) && !normalized.includes(NODE_MODULES)) {
+			pathsWithScope.add(normalized);
+		}
+	}
+
+	return Array.from(pathsWithScope);
+}
+
 function getNodeModulesImportParts(
 	state: TransformState,
 	sourceFile: ts.SourceFile,
@@ -129,7 +143,34 @@ function getNodeModulesImportParts(
 			),
 		];
 	} else {
-		const moduleRbxPath = state.rojoResolver.getRbxPathFromFilePath(moduleOutPath);
+		let moduleRbxPath = state.rojoResolver.getRbxPathFromFilePath(moduleOutPath);
+
+		// If not found in main resolver and this is a node_modules import,
+		// try finding it in alternative locations (e.g., rojo-sync directory)
+		if (!moduleRbxPath) {
+			const pathsWithScope = getPathsWithScope(state.rojoResolver, moduleScope);
+			if (pathsWithScope.length === 0) {
+				DiagnosticService.addDiagnostic(
+					errors.noRojoData(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath), true),
+				);
+				return [luau.none()];
+			}
+
+			// Extract the package part after node_modules (e.g., "@rbxts/services/init.lua")
+			const nodeModulesIndex = moduleOutPath.lastIndexOf(NODE_MODULES);
+			const afterNodeModules = moduleOutPath.substring(nodeModulesIndex + NODE_MODULES.length + 1);
+			const packageName = afterNodeModules.split(path.sep).slice(1).join(path.sep);
+
+			for (const pathWithScope of pathsWithScope) {
+				const alternativePath = path.join(pathWithScope, packageName);
+				const testRbxPath = state.rojoResolver.getRbxPathFromFilePath(alternativePath);
+				if (testRbxPath) {
+					moduleRbxPath = testRbxPath;
+					break;
+				}
+			}
+		}
+
 		if (!moduleRbxPath) {
 			DiagnosticService.addDiagnostic(
 				errors.noRojoData(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath), true),
